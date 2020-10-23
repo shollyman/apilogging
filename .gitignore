@@ -13,3 +13,6 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# Integration tests write output files, don't retain them
+integration_log.txt
