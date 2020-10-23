@@ -36,14 +36,16 @@ type LoggerConfig struct {
 	Logger *log.Logger
 	// LogRequest allows filtration based on the request body bytes.
 	LogRequest func(b []byte) bool
-	// LogResponse allows filtration based on the response body bytes.
-	LogResponse func(b []byte) bool
+	// LogResponse allows filtration based on the response body bytes.  Whether the
+	// request was matched is also available.
+	LogResponse func(b []byte, requestMatched bool) bool
 }
 
 var defaultScopes = []string{"https://www.googleapis.com/auth/cloud-platform"}
 
-// NewLoggingClient gives you the thing.
-func NewLoggingClient(ctx context.Context, cfg *LoggerConfig) (*http.Client, error) {
+// NewLoggingHTTPClient provides an instrumented HTTP client, which can be used for constructing
+// an appropriate service-specific API client.
+func NewLoggingHTTPClient(ctx context.Context, cfg *LoggerConfig) (*http.Client, error) {
 	if cfg == nil {
 		return nil, errors.New("must supply a valid loggerconfig")
 	}
@@ -59,6 +61,13 @@ func NewLoggingClient(ctx context.Context, cfg *LoggerConfig) (*http.Client, err
 		return nil, err
 	}
 	cfg.Logger.Print("Starting http logging client")
+	if cfg.LogRequest != nil {
+		cfg.Logger.Print("There is a filter present on requests")
+	}
+	if cfg.LogResponse != nil {
+		cfg.Logger.Print("There is a filter present on responses")
+	}
+
 	return &http.Client{Transport: interceptor{
 		rt:  tr,
 		cfg: cfg,
@@ -77,7 +86,9 @@ func (i interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	matchedReq := false
 	if i.cfg.LogRequest == nil || i.cfg.LogRequest(dumpReq) {
+		matchedReq = true
 		i.cfg.Logger.Printf("REQUEST\n=====\n%s\n=====\n", dumpReq)
 	}
 
@@ -90,9 +101,8 @@ func (i interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if i.cfg.LogResponse == nil || i.cfg.LogResponse(dumpResp) {
+	if i.cfg.LogResponse == nil || i.cfg.LogResponse(dumpResp, matchedReq) {
 		i.cfg.Logger.Printf("RESPONSE\n=====\n%s\n=====\n", dumpResp)
 	}
-
 	return resp, nil
 }

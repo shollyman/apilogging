@@ -24,6 +24,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/oauth2/v1"
 	"google.golang.org/api/option"
 )
 
@@ -37,14 +38,15 @@ func TestBigQuery(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup a file logger.
-	f, err := os.OpenFile("integration_log.txt", os.O_CREATE|os.O_WRONLY, 0644)
+	fname := "integration_log_bigquery.txt"
+	f, err := os.Create(fname)
 	if err != nil {
-		t.Fatalf("os.OpenFile: %v", err)
+		t.Fatalf("os.Create: %v", err)
 	}
 	defer f.Close()
 	l := log.New(f, "", log.LstdFlags)
 
-	hc, err := NewLoggingClient(ctx, &LoggerConfig{
+	hc, err := NewLoggingHTTPClient(ctx, &LoggerConfig{
 		Logger: l,
 	})
 	if err != nil {
@@ -82,7 +84,7 @@ func TestBigQuery(t *testing.T) {
 	client.Close()
 	// close the logger file
 	f.Close()
-	b, err := ioutil.ReadFile("log.txt")
+	b, err := ioutil.ReadFile(fname)
 	if err != nil {
 		t.Fatalf("failed to read log contents: %v", err)
 	}
@@ -95,4 +97,61 @@ func TestBigQuery(t *testing.T) {
 	if !strings.Contains(string(b), "Content-Type: application/json") {
 		t.Error("Expected logfile to contain a content-type response header and did not")
 	}
+}
+
+func TestOAuthWithMatchers(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup logger and intercepting transport
+	fname := "integration_log_oauthv2.txt"
+	f, err := os.Create(fname)
+	if err != nil {
+		t.Fatalf("os.Create: %v", err)
+	}
+	defer f.Close()
+	l := log.New(f, "", log.LstdFlags)
+
+	hc, err := NewLoggingHTTPClient(ctx, &LoggerConfig{
+		Logger:      l,
+		LogRequest:  func(b []byte) bool { return false },
+		LogResponse: func(b []byte, reqMatched bool) bool { return !reqMatched },
+	})
+	if err != nil {
+		t.Fatalf("NewLoggingClient: %v", err)
+	}
+
+	svc, err := oauth2.NewService(ctx, option.WithHTTPClient(hc))
+	if err != nil {
+		t.Fatalf("oauth2.NewService: %v", err)
+	}
+
+	// Interrogate the oauth2 userinfo info endpoint.
+	call := svc.Userinfo.Get()
+	resp, err := call.Do()
+	if err != nil {
+		t.Errorf("call Userinfo.Get: %v", err)
+	}
+
+	// We got a response back, but the identity is somehow empty.
+	// Treat this as an error.
+	if resp.Email == "" {
+		t.Errorf("expected email to be populated, was empty")
+	}
+
+	// close the logger file
+	f.Close()
+	b, err := ioutil.ReadFile(fname)
+	if err != nil {
+		t.Fatalf("failed to read log contents: %v", err)
+	}
+	if len(b) == 0 {
+		t.Error("expected non-empty logfile")
+	}
+	if strings.Contains(string(b), "GET /oauth") {
+		t.Error("Expected logfile to not contain requests, but did")
+	}
+	if !strings.Contains(string(b), "Content-Type: application/json") {
+		t.Error("Expected logfile to contain a content-type response header and did not")
+	}
+
 }

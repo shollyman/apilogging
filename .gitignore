@@ -15,4 +15,4 @@
 # vendor/
 
 # Integration tests write output files, don't retain them
-integration_log.txt
+integration_log*
