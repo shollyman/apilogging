@@ -34,6 +34,10 @@ type LoggerConfig struct {
 	Scopes []string
 	// Logging must contain an instance of a logger.
 	Logger *log.Logger
+	// CaptureFullRequest governs whether the body of the request is captured.
+	CaptureFullRequest bool
+	// CaptureFullResponse governs whether the body of the response is captured.
+	CaptureFullResponse bool
 	// LogRequest allows filtration based on the request body bytes.
 	LogRequest func(b []byte) bool
 	// LogResponse allows filtration based on the response body bytes.  Whether the
@@ -46,12 +50,6 @@ var defaultScopes = []string{"https://www.googleapis.com/auth/cloud-platform"}
 // NewLoggingHTTPClient provides an instrumented HTTP client, which can be used for constructing
 // an appropriate service-specific API client.
 func NewLoggingHTTPClient(ctx context.Context, cfg *LoggerConfig) (*http.Client, error) {
-	if cfg == nil {
-		return nil, errors.New("must supply a valid loggerconfig")
-	}
-	if cfg.Logger == nil {
-		return nil, errors.New("LoggerConfig must contain a Logger")
-	}
 	scopes := defaultScopes
 	if cfg != nil && cfg.Scopes != nil {
 		scopes = cfg.Scopes
@@ -60,21 +58,31 @@ func NewLoggingHTTPClient(ctx context.Context, cfg *LoggerConfig) (*http.Client,
 	if err != nil {
 		return nil, err
 	}
-	cfg.Logger.Print("Starting http logging client")
-	if cfg.LogRequest != nil {
-		cfg.Logger.Print("There is a filter present on requests")
-	}
-	if cfg.LogResponse != nil {
-		cfg.Logger.Print("There is a filter present on responses")
+	interceptor, err := NewInterceptingRoundTripper(cfg, tr)
+	if err != nil {
+		return nil, err
 	}
 
-	return &http.Client{Transport: interceptor{
-		rt:  tr,
-		cfg: cfg,
-	}}, nil
-
+	return &http.Client{Transport: interceptor}, nil
 }
 
+// NewInterceptingRoundTripper sets up a logging http.RoundTripper.
+func NewInterceptingRoundTripper(cfg *LoggerConfig, wrapped http.RoundTripper) (http.RoundTripper, error) {
+	if cfg == nil {
+		return nil, errors.New("must supply a valid loggerconfig")
+	}
+	if cfg.Logger == nil {
+		return nil, errors.New("LoggerConfig must contain a Logger")
+	}
+	return interceptor{
+		rt:  wrapped,
+		cfg: cfg,
+	}, nil
+}
+
+// This library works by using the middleware pattern to wrap a "real" RoundTripper.
+// Because that called roundtripper may further modify the request, it is possible
+// that the logged Request is not accurate.
 type interceptor struct {
 	rt  http.RoundTripper
 	cfg *LoggerConfig
@@ -82,7 +90,8 @@ type interceptor struct {
 
 func (i interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 
-	dumpReq, err := httputil.DumpRequest(r, true)
+	// Capture and evaluate the outgoing request.
+	dumpReq, err := httputil.DumpRequest(r, i.cfg.CaptureFullRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -92,12 +101,14 @@ func (i interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		i.cfg.Logger.Printf("REQUEST\n=====\n%s\n=====\n", dumpReq)
 	}
 
+	// Invoke the real roundtripper
 	resp, err := i.rt.RoundTrip(r)
 	if err != nil {
 		return resp, err
 	}
 
-	dumpResp, err := httputil.DumpResponse(resp, true)
+	// Now capture/evaluate the response.
+	dumpResp, err := httputil.DumpResponse(resp, i.cfg.CaptureFullResponse)
 	if err != nil {
 		return nil, err
 	}

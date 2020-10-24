@@ -47,7 +47,9 @@ func TestBigQuery(t *testing.T) {
 	l := log.New(f, "", log.LstdFlags)
 
 	hc, err := NewLoggingHTTPClient(ctx, &LoggerConfig{
-		Logger: l,
+		Logger:              l,
+		CaptureFullRequest:  true,
+		CaptureFullResponse: true,
 	})
 	if err != nil {
 		t.Fatalf("NewLoggingClient: %v", err)
@@ -132,8 +134,7 @@ func TestOAuthWithMatchers(t *testing.T) {
 		t.Errorf("call Userinfo.Get: %v", err)
 	}
 
-	// We got a response back, but the identity is somehow empty.
-	// Treat this as an error.
+	// Do a quick evaluation of the response.  We expect email to be populated.
 	if resp.Email == "" {
 		t.Errorf("expected email to be populated, was empty")
 	}
