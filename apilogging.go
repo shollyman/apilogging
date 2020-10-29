@@ -54,16 +54,16 @@ func NewLoggingHTTPClient(ctx context.Context, cfg *LoggerConfig) (*http.Client,
 	if cfg != nil && cfg.Scopes != nil {
 		scopes = cfg.Scopes
 	}
-	tr, err := htransport.NewTransport(ctx, http.DefaultTransport, option.WithScopes(scopes...))
+	interceptor, err := NewInterceptingRoundTripper(cfg, http.DefaultTransport)
 	if err != nil {
 		return nil, err
 	}
-	interceptor, err := NewInterceptingRoundTripper(cfg, tr)
+	tr, err := htransport.NewTransport(ctx, interceptor, option.WithScopes(scopes...))
 	if err != nil {
 		return nil, err
 	}
 
-	return &http.Client{Transport: interceptor}, nil
+	return &http.Client{Transport: tr}, nil
 }
 
 // NewInterceptingRoundTripper sets up a logging http.RoundTripper.
@@ -80,9 +80,6 @@ func NewInterceptingRoundTripper(cfg *LoggerConfig, wrapped http.RoundTripper) (
 	}, nil
 }
 
-// This library works by using the middleware pattern to wrap a "real" RoundTripper.
-// Because that called roundtripper may further modify the request, it is possible
-// that the logged Request is not accurate.
 type interceptor struct {
 	rt  http.RoundTripper
 	cfg *LoggerConfig
@@ -101,7 +98,7 @@ func (i interceptor) RoundTrip(r *http.Request) (*http.Response, error) {
 		i.cfg.Logger.Printf("REQUEST\n=====\n%s\n=====\n", dumpReq)
 	}
 
-	// Invoke the real roundtripper
+	// Invoke the wrapped roundtripper
 	resp, err := i.rt.RoundTrip(r)
 	if err != nil {
 		return resp, err
